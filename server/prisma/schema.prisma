@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Person {
+  id             Int             @id @default(autoincrement())
+  name           String
+  nric           String?
+  studentId      String?
+  taxNumber      String?
+  address        String?         @db.Text
+  bankAccount    String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  dynamicFields  DynamicField[]
+  linkedPeople   LinkedPerson[]
+}
+
+model DynamicField {
+  id        Int      @id @default(autoincrement())
+  type      String
+  label     String?
+  value     String   @db.Text
+  personId  Int
+  person    Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+}
+
+model LinkedPerson {
+  id             Int             @id @default(autoincrement())
+  name           String
+  relationship   String
+  nric           String?
+  studentId      String?
+  taxNumber      String?
+  address        String?         @db.Text
+  bankAccount    String?
+  parentId       Int
+  parent         Person          @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  dynamicFields  DynamicLinkField[]
+}
+
+model DynamicLinkField {
+  id             Int          @id @default(autoincrement())
+  type           String
+  label          String?
+  value          String       @db.Text
+  linkedPersonId Int
+  linkedPerson   LinkedPerson @relation(fields: [linkedPersonId], references: [id], onDelete: Cascade)
+}
