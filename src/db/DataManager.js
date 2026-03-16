@@ -1,4 +1,4 @@
-const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:3001' : '';
+const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:8000' : '';
 const API_URL = `${API_BASE}/api/people`;
 const AUTH_URL = `${API_BASE}/api/login`;
 
