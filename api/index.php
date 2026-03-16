@@ -2,13 +2,24 @@
 // Allow CORS for local development (and cross-origin if deployed securely)
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization");
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Role");
 header("Content-Type: application/json; charset=UTF-8");
 
 // Handle preflight OPTIONS request
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
+}
+
+// Simple role authorization middleware
+$userRole = $_SERVER['HTTP_X_ROLE'] ?? 'viewer'; // Default to viewer if not specified
+if (in_array($_SERVER['REQUEST_METHOD'], ['POST', 'PUT', 'DELETE']) && $userRole === 'viewer') {
+    // Only allow POST to /api/login for viewers
+    if (!str_contains($_SERVER['REQUEST_URI'], '/login')) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Permission denied. Read-only access.']);
+        exit;
+    }
 }
 
 require_once __DIR__ . '/db.php';
@@ -45,7 +56,9 @@ if ($resource === 'login' && $method === 'POST') {
     $password = $data['password'] ?? '';
     
     if ($email === ADMIN_EMAIL && $password === ADMIN_PASSWORD) {
-        echo json_encode(['success' => true, 'user' => ['email' => ADMIN_EMAIL]]);
+        echo json_encode(['success' => true, 'user' => ['email' => ADMIN_EMAIL, 'role' => 'admin']]);
+    } else if ($email === VIEWER_EMAIL && $password === VIEWER_PASSWORD) {
+        echo json_encode(['success' => true, 'user' => ['email' => VIEWER_EMAIL, 'role' => 'viewer']]);
     } else {
         http_response_code(401);
         echo json_encode(['error' => 'Invalid credentials']);
@@ -136,59 +149,94 @@ if ($resource === 'people') {
             try {
                 $pdo->beginTransaction();
                 
-                $stmt = $pdo->prepare("INSERT INTO Person (name, nric, studentId, taxNumber, address, bankAccount, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
-                $stmt->execute([
-                    $data['name'] ?? '',
-                    $data['nric'] ?? null,
-                    $data['studentId'] ?? null,
-                    $data['taxNumber'] ?? null,
-                    $data['address'] ?? null,
-                    $data['bankAccount'] ?? null
-                ]);
-                
-                $personId = $pdo->lastInsertId();
-                
-                if (!empty($data['dynamicFields'])) {
-                    $stmt = $pdo->prepare("INSERT INTO DynamicField (type, label, value, personId) VALUES (?, ?, ?, ?)");
-                    foreach ($data['dynamicFields'] as $field) {
-                        $stmt->execute([$field['type'], $field['label'] ?? null, $field['value'], $personId]);
+                // Helper to insert one person
+                $insertPerson = function($personData) use ($pdo) {
+                    $name = $personData['name'] ?? '';
+                    $nric = $personData['nric'] ?? null;
+                    
+                    // Duplicate check
+                    if (!empty($nric)) {
+                        $checkStmt = $pdo->prepare("SELECT id FROM Person WHERE LOWER(nric) = LOWER(?)");
+                        $checkStmt->execute([$nric]);
+                    } else {
+                        $checkStmt = $pdo->prepare("SELECT id FROM Person WHERE LOWER(name) = LOWER(?)");
+                        $checkStmt->execute([$name]);
                     }
-                }
-                
-                if (!empty($data['linkedPeople'])) {
-                    foreach ($data['linkedPeople'] as $linked) {
-                        $stmtLinked = $pdo->prepare("INSERT INTO LinkedPerson (name, relationship, nric, studentId, taxNumber, address, bankAccount, parentId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                        $stmtLinked->execute([
-                            $linked['name'] ?? '',
-                            $linked['relationship'] ?? '',
-                            $linked['nric'] ?? null,
-                            $linked['studentId'] ?? null,
-                            $linked['taxNumber'] ?? null,
-                            $linked['address'] ?? null,
-                            $linked['bankAccount'] ?? null,
-                            $personId
-                        ]);
-                        
-                        $linkedPersonId = $pdo->lastInsertId();
-                        
-                        if (!empty($linked['dynamicFields'])) {
-                            $stmtField = $pdo->prepare("INSERT INTO DynamicLinkField (type, label, value, linkedPersonId) VALUES (?, ?, ?, ?)");
-                            foreach ($linked['dynamicFields'] as $field) {
-                                $stmtField->execute([$field['type'], $field['label'] ?? null, $field['value'], $linkedPersonId]);
+                    
+                    $existingId = $checkStmt->fetchColumn();
+                    if ($existingId) {
+                        return $existingId; // Skip insert, return existing ID
+                    }
+
+                    $stmt = $pdo->prepare("INSERT INTO Person (name, nric, studentId, taxNumber, address, bankAccount, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
+                    $stmt->execute([
+                        $name,
+                        $nric,
+                        $personData['studentId'] ?? null,
+                        $personData['taxNumber'] ?? null,
+                        $personData['address'] ?? null,
+                        $personData['bankAccount'] ?? null
+                    ]);
+                    
+                    $personId = $pdo->lastInsertId();
+                    
+                    if (!empty($personData['dynamicFields'])) {
+                        $stmtType = $pdo->prepare("INSERT INTO DynamicField (type, label, value, personId) VALUES (?, ?, ?, ?)");
+                        foreach ($personData['dynamicFields'] as $field) {
+                            $stmtType->execute([$field['type'], $field['label'] ?? null, $field['value'], $personId]);
+                        }
+                    }
+                    
+                    if (!empty($personData['linkedPeople'])) {
+                        foreach ($personData['linkedPeople'] as $linked) {
+                            $stmtLinked = $pdo->prepare("INSERT INTO LinkedPerson (name, relationship, nric, studentId, taxNumber, address, bankAccount, parentId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                            $stmtLinked->execute([
+                                $linked['name'] ?? '',
+                                $linked['relationship'] ?? '',
+                                $linked['nric'] ?? null,
+                                $linked['studentId'] ?? null,
+                                $linked['taxNumber'] ?? null,
+                                $linked['address'] ?? null,
+                                $linked['bankAccount'] ?? null,
+                                $personId
+                            ]);
+                            
+                            $linkedPersonId = $pdo->lastInsertId();
+                            
+                            if (!empty($linked['dynamicFields'])) {
+                                $stmtField = $pdo->prepare("INSERT INTO DynamicLinkField (type, label, value, linkedPersonId) VALUES (?, ?, ?, ?)");
+                                foreach ($linked['dynamicFields'] as $field) {
+                                    $stmtField->execute([$field['type'], $field['label'] ?? null, $field['value'], $linkedPersonId]);
+                                }
                             }
                         }
                     }
+                    return $personId;
+                };
+
+                // Check if bulk insert (sequential array) or single insert (associative array)
+                if (isset($data[0]) && is_array($data[0])) {
+                    $createdIds = [];
+                    foreach ($data as $personData) {
+                        $createdIds[] = $insertPerson($personData);
+                    }
+                    $pdo->commit();
+                    
+                    // Not fetching all created people for speed in bulk operations
+                    http_response_code(201);
+                    echo json_encode(['success' => true, 'insertedCount' => count($createdIds)]);
+                } else {
+                    $personId = $insertPerson($data);
+                    $pdo->commit();
+                    
+                    // Fetch the new person to return exact structure requested
+                    $stmt = $pdo->prepare("SELECT * FROM Person WHERE id = ?");
+                    $stmt->execute([$personId]);
+                    $row = $stmt->fetch();
+                    $createdPerson = $row ? $castPersonTypes($row) : null;
+                    http_response_code(201);
+                    echo json_encode($createdPerson);
                 }
-                
-                $pdo->commit();
-                
-                // Fetch the new person to return exact structure requested
-                // This simplifies logic vs returning raw data array back
-                $stmt = $pdo->prepare("SELECT * FROM Person WHERE id = ?");
-                $stmt->execute([$personId]);
-                $createdPerson = $castPersonTypes($stmt->fetch());
-                http_response_code(201);
-                echo json_encode($createdPerson);
                 
             } catch (Exception $e) {
                 $pdo->rollBack();

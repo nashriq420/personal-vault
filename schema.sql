@@ -1,0 +1,42 @@
+CREATE TABLE IF NOT EXISTS Person (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    nric VARCHAR(255),
+    studentId VARCHAR(255),
+    taxNumber VARCHAR(255),
+    address TEXT,
+    bankAccount VARCHAR(255),
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS DynamicField (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    type VARCHAR(255) NOT NULL,
+    label VARCHAR(255),
+    value TEXT NOT NULL,
+    personId INT NOT NULL,
+    FOREIGN KEY (personId) REFERENCES Person(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS LinkedPerson (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    relationship VARCHAR(255) NOT NULL,
+    nric VARCHAR(255),
+    studentId VARCHAR(255),
+    taxNumber VARCHAR(255),
+    address TEXT,
+    bankAccount VARCHAR(255),
+    parentId INT NOT NULL,
+    FOREIGN KEY (parentId) REFERENCES Person(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS DynamicLinkField (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    type VARCHAR(255) NOT NULL,
+    label VARCHAR(255),
+    value TEXT NOT NULL,
+    linkedPersonId INT NOT NULL,
+    FOREIGN KEY (linkedPersonId) REFERENCES LinkedPerson(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

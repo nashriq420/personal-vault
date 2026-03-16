@@ -2,18 +2,25 @@ import { useState, useEffect } from 'react';
 import EditForm from './components/EditForm';
 import DataTable from './components/DataTable';
 import LoginPage from './components/LoginPage';
-import { db, getAllPeople, addPerson, updatePerson, deletePerson, findPersonByUnique } from './db/DataManager';
+import { getAllPeople, addPerson, addPeople, updatePerson, deletePerson, findPersonByUnique } from './db/DataManager';
 import { Shield, Plus, Table as TableIcon, UserPlus, Download, Upload } from 'lucide-react';
 import { exportToExcel, parseExcelFile } from './utils/excelUtils';
 
 const toTitleCase = (str) => {
   if (!str) return '';
-  return str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+  return String(str).toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 };
 
 const App = () => {
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem('vault_user');
+    const lastActive = localStorage.getItem('vault_last_active');
+    // Check if session has expired (e.g., 30 minutes = 1800000 ms)
+    if (saved && lastActive && (Date.now() - parseInt(lastActive)) > 1800000) {
+      localStorage.removeItem('vault_user');
+      localStorage.removeItem('vault_last_active');
+      return null;
+    }
     return saved ? JSON.parse(saved) : null;
   });
   const [people, setPeople] = useState([]);
@@ -23,17 +30,48 @@ const App = () => {
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
 
   useEffect(() => {
-    if (user) loadPeople();
+    if (user) {
+      loadPeople();
+      
+      // Update activity timestamp on user interaction
+      const updateActivity = () => {
+        localStorage.setItem('vault_last_active', Date.now().toString());
+      };
+      
+      window.addEventListener('mousemove', updateActivity);
+      window.addEventListener('keypress', updateActivity);
+      window.addEventListener('click', updateActivity);
+      window.addEventListener('scroll', updateActivity, true);
+      
+      // Check for expiration every minute
+      const interval = setInterval(() => {
+        const lastActive = localStorage.getItem('vault_last_active');
+        if (lastActive && (Date.now() - parseInt(lastActive)) > 1800000) {
+          handleLogout();
+          alert('Session expired due to inactivity.');
+        }
+      }, 60000);
+
+      return () => {
+        window.removeEventListener('mousemove', updateActivity);
+        window.removeEventListener('keypress', updateActivity);
+        window.removeEventListener('click', updateActivity);
+        window.removeEventListener('scroll', updateActivity, true);
+        clearInterval(interval);
+      };
+    }
   }, [user]);
 
   const handleLogin = (userData) => {
     setUser(userData);
     localStorage.setItem('vault_user', JSON.stringify(userData));
+    localStorage.setItem('vault_last_active', Date.now().toString());
   };
 
   const handleLogout = () => {
     setUser(null);
     localStorage.removeItem('vault_user');
+    localStorage.removeItem('vault_last_active');
   };
 
   const loadPeople = async () => {
@@ -43,34 +81,39 @@ const App = () => {
   };
 
   const handleSave = async (formData) => {
-    // Normalize names
-    const normalizedData = {
-      ...formData,
-      name: toTitleCase(formData.name),
-      linkedPeople: formData.linkedPeople.map(person => ({
-        ...person,
-        name: toTitleCase(person.name)
-      }))
-    };
+    try {
+      // Normalize names
+      const normalizedData = {
+        ...formData,
+        name: toTitleCase(formData.name),
+        linkedPeople: formData.linkedPeople.map(person => ({
+          ...person,
+          name: toTitleCase(person.name)
+        }))
+      };
 
-    // Duplicate Check
-    const existing = await findPersonByUnique(normalizedData.name, normalizedData.nric);
-    if (existing && existing.id !== currentPerson?.id) {
-      const confirmSave = window.confirm(
-        `A record for "${existing.name}" ${normalizedData.nric ? `(${normalizedData.nric})` : ''} already exists. Are you sure you want to save this as a separate record?`
-      );
-      if (!confirmSave) return;
-    }
+      // Duplicate Check
+      const existing = await findPersonByUnique(normalizedData.name, normalizedData.nric);
+      if (existing && existing.id !== currentPerson?.id) {
+        const confirmSave = window.confirm(
+          `A record for "${existing.name}" ${normalizedData.nric ? `(${normalizedData.nric})` : ''} already exists. Are you sure you want to save this as a separate record?`
+        );
+        if (!confirmSave) return;
+      }
 
-    if (currentPerson?.id) {
-      await updatePerson(currentPerson.id, normalizedData);
-    } else {
-      await addPerson(normalizedData);
+      if (currentPerson?.id) {
+        await updatePerson(currentPerson.id, normalizedData);
+      } else {
+        await addPerson(normalizedData);
+      }
+      setCurrentPerson(null);
+      setIsEditing(false);
+      setView('table');
+      loadPeople();
+    } catch (err) {
+      console.error('Save failed:', err);
+      alert('Failed to save record: ' + err.message);
     }
-    setCurrentPerson(null);
-    setIsEditing(false);
-    setView('table');
-    loadPeople();
   };
 
   const handleExport = () => {
@@ -86,23 +129,37 @@ const App = () => {
       const importedData = await parseExcelFile(file);
       let addedCount = 0;
       let skippedCount = 0;
+      
+      // We still need to deduplicate based on existing DB data before inserting
+      // Fetch current database state to check for duplicates client-side, 
+      // or we can just send it all and let the backend handle it.
+      // For simplicity/current logic matching:
+      const allCurrentPeople = await getAllPeople();
+      const newPeopleToInsert = [];
 
       for (const record of importedData) {
-        // Apply normalization and check for duplicates (similar to handleSave)
+        // Apply normalization
         const normalized = {
           ...record,
           name: toTitleCase(record.name),
           linkedPeople: record.linkedPeople?.map(l => ({ ...l, name: toTitleCase(l.name) })) || []
         };
 
-        const existing = await findPersonByUnique(normalized.name, normalized.nric);
-        if (existing) {
-          skippedCount++;
-          continue;
-        }
+        const isDuplicate = allCurrentPeople.some(p => 
+          (p.name && normalized.name && p.name.toString().toLowerCase() === normalized.name.toString().toLowerCase()) || 
+          (normalized.nric && p.nric && p.nric.toString().toLowerCase() === normalized.nric.toString().toLowerCase())
+        );
 
-        await addPerson(normalized);
-        addedCount++;
+        if (isDuplicate) {
+          skippedCount++;
+        } else {
+          newPeopleToInsert.push(normalized);
+        }
+      }
+
+      if (newPeopleToInsert.length > 0) {
+        const result = await addPeople(newPeopleToInsert);
+        addedCount = result.insertedCount || newPeopleToInsert.length;
       }
 
       alert(`Import complete!\nAdded: ${addedCount}\nSkipped (duplicates): ${skippedCount}`);
@@ -158,7 +215,7 @@ const App = () => {
         </div>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <div className="hide-mobile" style={{ marginRight: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-            User: {user.email}
+            User: {user.email} {user.role === 'viewer' ? '(Read-Only)' : ''}
           </div>
           <button 
             className="btn-primary" 
@@ -167,13 +224,16 @@ const App = () => {
           >
             <TableIcon size={18} /> Dashboard
           </button>
-          <button 
-            className="btn-primary" 
-            style={{ background: view === 'form' ? 'var(--primary)' : 'transparent', border: '1px solid var(--border)' }}
-            onClick={handleAddNew}
-          >
-            <UserPlus size={18} /> Add New
-          </button>
+          
+          {user.role !== 'viewer' && (
+            <button 
+              className="btn-primary" 
+              style={{ background: view === 'form' ? 'var(--primary)' : 'transparent', border: '1px solid var(--border)' }}
+              onClick={handleAddNew}
+            >
+              <UserPlus size={18} /> Add New
+            </button>
+          )}
           
           <div style={{ display: 'flex', gap: '0.5rem', borderLeft: '1px solid var(--border)', paddingLeft: '1rem', marginLeft: '0.5rem' }}>
             <button 
@@ -184,14 +244,17 @@ const App = () => {
             >
               <Download size={18} /> <span className="hide-mobile">Export</span>
             </button>
-            <label 
-              className="btn-primary" 
-              style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border)', cursor: 'pointer', padding: '0.6rem 0.8rem' }}
-              title="Bulk Import Excel"
-            >
-              <Upload size={18} /> <span className="hide-mobile">Import</span>
-              <input type="file" accept=".xlsx" onChange={handleImport} style={{ display: 'none' }} />
-            </label>
+            
+            {user.role !== 'viewer' && (
+              <label 
+                className="btn-primary" 
+                style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid var(--border)', cursor: 'pointer', padding: '0.6rem 0.8rem' }}
+                title="Bulk Import Excel"
+              >
+                <Upload size={18} /> <span className="hide-mobile">Import</span>
+                <input type="file" accept=".xlsx" onChange={handleImport} style={{ display: 'none' }} />
+              </label>
+            )}
             <button 
               className="btn-primary" 
               style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#f87171', marginLeft: '0.5rem' }}
@@ -212,6 +275,7 @@ const App = () => {
             people={people} 
             onEdit={handleEdit} 
             onDelete={handleDelete} 
+            userRole={user.role}
           />
         )}
       </main>

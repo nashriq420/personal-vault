@@ -1,17 +1,53 @@
-import React, { useState, useMemo } from 'react';
-import { Eye, EyeOff, Copy, Check, Users, Trash2, Edit2, Search, ChevronDown, ChevronRight } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { Eye, EyeOff, Copy, Check, Users, Trash2, Edit2, Search, ChevronDown, ChevronRight, Printer } from 'lucide-react';
+import { printPerson } from '../utils/printUtils';
 
-const DataTable = ({ people, onEdit, onDelete }) => {
+const DataTable = ({ people, onEdit, onDelete, userRole }) => {
   const [showSensitive, setShowSensitive] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedRows, setExpandedRows] = useState(new Set());
+  
+  const topScrollRef = useRef(null);
+  const tableScrollRef = useRef(null);
 
-  const copyToClipboard = (text, id) => {
+  const handleTopScroll = () => {
+    if (tableScrollRef.current && topScrollRef.current) {
+      tableScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+    }
+  };
+
+  const handleTableScroll = () => {
+    if (tableScrollRef.current && topScrollRef.current) {
+      topScrollRef.current.scrollLeft = tableScrollRef.current.scrollLeft;
+    }
+  };
+  
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
+
+  const copyToClipboard = async (text, id) => {
     if (!text) return;
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for non-HTTPS (like local network cPanel IP testing)
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "absolute";
+        textArea.style.left = "-999999px";
+        document.body.prepend(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+      }
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      console.error('Copy failed', err);
+    }
   };
 
   const toggleRow = (id) => {
@@ -25,16 +61,47 @@ const DataTable = ({ people, onEdit, onDelete }) => {
   };
 
   const filteredPeople = useMemo(() => {
-    if (!searchTerm) return people;
-    const lowerSearch = searchTerm.toLowerCase();
-    return people.filter(p => 
-      p.name?.toLowerCase().includes(lowerSearch) ||
-      p.nric?.toLowerCase().includes(lowerSearch) ||
-      p.taxNumber?.toLowerCase().includes(lowerSearch) ||
-      p.dynamicFields?.some(f => f.value?.toLowerCase().includes(lowerSearch)) ||
-      p.linkedPeople?.some(lp => lp.name?.toLowerCase().includes(lowerSearch))
-    );
+    let result = people;
+    
+    // First, filter by search term if present
+    if (searchTerm) {
+      const lowerSearch = searchTerm.toLowerCase();
+      result = people.filter(p => 
+        p.name?.toLowerCase().includes(lowerSearch) ||
+        p.nric?.toLowerCase().includes(lowerSearch) ||
+        p.taxNumber?.toLowerCase().includes(lowerSearch) ||
+        p.dynamicFields?.some(f => f.value?.toLowerCase().includes(lowerSearch)) ||
+        p.linkedPeople?.some(lp => lp.name?.toLowerCase().includes(lowerSearch))
+      );
+    }
+
+    // Now, sort the result alphabetically by name
+    // We create a copy of the array using spread syntax because sort() mutates the original array
+    return [...result].sort((a, b) => {
+      const nameA = a.name || '';
+      const nameB = b.name || '';
+      return nameA.localeCompare(nameB);
+    });
   }, [people, searchTerm]);
+
+  // Reset to page 1 when searching
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
+  const totalPages = Math.ceil(filteredPeople.length / itemsPerPage);
+  const paginatedPeople = useMemo(() => {
+    const startIdx = (currentPage - 1) * itemsPerPage;
+    return filteredPeople.slice(startIdx, startIdx + itemsPerPage);
+  }, [filteredPeople, currentPage, itemsPerPage]);
+
+  const handlePrevPage = () => {
+    setCurrentPage((prev) => Math.max(prev - 1, 1));
+  };
+
+  const handleNextPage = () => {
+    setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+  };
 
   if (!people || people.length === 0) {
     return (
@@ -48,6 +115,7 @@ const DataTable = ({ people, onEdit, onDelete }) => {
     const isSensitive = sensitive && !showSensitive;
     const displayValue = isSensitive ? '••••••••' : (value || '');
     const copyId = `${id}-${label}-${rowIndex}`;
+    const isCopied = copiedId === copyId;
 
     return (
       <td style={{ 
@@ -65,13 +133,33 @@ const DataTable = ({ people, onEdit, onDelete }) => {
             {displayValue}
           </span>
           {value && (
-            <button 
-              type="button"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); copyToClipboard(value, copyId); }}
-              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', opacity: 0.4, cursor: 'pointer', padding: 0 }}
-            >
-              {copiedId === copyId ? <Check size={16} /> : <Copy size={16} />}
-            </button>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              {isCopied && (
+                <span style={{ 
+                  position: 'absolute', 
+                  right: '100%', 
+                  marginRight: '0.5rem', 
+                  background: 'var(--primary)', 
+                  color: 'white', 
+                  fontSize: '0.65rem', 
+                  padding: '2px 6px', 
+                  borderRadius: '4px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  animation: 'fadeIn 0.2s'
+                }}>
+                  Copied!
+                </span>
+              )}
+              <button 
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); copyToClipboard(value, copyId); }}
+                style={{ background: 'none', border: 'none', color: isCopied ? 'var(--primary)' : 'var(--text-muted)', opacity: isCopied ? 1 : 0.4, cursor: 'pointer', padding: 0, display: 'flex' }}
+                title="Copy to clipboard"
+              >
+                {isCopied ? <Check size={16} /> : <Copy size={16} />}
+              </button>
+            </div>
           )}
         </div>
       </td>
@@ -124,16 +212,28 @@ const DataTable = ({ people, onEdit, onDelete }) => {
               <div style={{ display: 'flex', gap: '0.6rem' }}>
                 <button 
                   type="button"
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); onEdit(person); }} 
-                  style={{ background: 'rgba(99, 102, 241, 0.2)', border: 'none', color: 'var(--primary)', padding: '0.5rem', borderRadius: '8px', cursor: 'pointer' }}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); printPerson(person); }} 
+                  style={{ background: 'rgba(16, 185, 129, 0.2)', border: 'none', color: '#10b981', padding: '0.5rem', borderRadius: '8px', cursor: 'pointer' }}
+                  title="Print Profile"
                 >
-                  <Edit2 size={18} />
+                  <Printer size={18} />
                 </button>
-                {!isSubRow && (
+                {userRole !== 'viewer' && (
+                  <button 
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onEdit(person); }} 
+                    style={{ background: 'rgba(99, 102, 241, 0.2)', border: 'none', color: 'var(--primary)', padding: '0.5rem', borderRadius: '8px', cursor: 'pointer' }}
+                    title="Edit Record"
+                  >
+                    <Edit2 size={18} />
+                  </button>
+                )}
+                {!isSubRow && userRole !== 'viewer' && (
                   <button 
                     type="button"
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(person.id); }} 
                     style={{ background: 'rgba(239, 68, 68, 0.2)', border: 'none', color: '#ef4444', padding: '0.5rem', borderRadius: '8px', cursor: 'pointer' }}
+                    title="Delete Record"
                   >
                     <Trash2 size={18} />
                   </button>
@@ -213,7 +313,20 @@ const DataTable = ({ people, onEdit, onDelete }) => {
         </div>
       </div>
 
-      <div style={{ overflowX: 'auto', background: 'rgba(15, 23, 42, 0.3)', borderRadius: '16px', border: '1px solid var(--border)' }}>
+      {/* Top Scrollbar Dummy Element */}
+      <div 
+        ref={topScrollRef} 
+        onScroll={handleTopScroll} 
+        style={{ overflowX: 'auto', marginBottom: '0.5rem', height: '12px' }}
+      >
+        <div style={{ width: '1800px', height: '1px' }}></div>
+      </div>
+
+      <div 
+        ref={tableScrollRef} 
+        onScroll={handleTableScroll} 
+        style={{ overflowX: 'auto', background: 'rgba(15, 23, 42, 0.3)', borderRadius: '16px', border: '1px solid var(--border)' }}
+      >
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '1800px' }}>
           <thead>
             <tr style={{ textAlign: 'left', background: 'rgba(255, 255, 255, 0.05)', borderBottom: '2px solid var(--border)' }}>
@@ -234,13 +347,70 @@ const DataTable = ({ people, onEdit, onDelete }) => {
             </tr>
           </thead>
           <tbody>
-            {filteredPeople.map((person, index) => renderPersonRows(person, index))}
+            {paginatedPeople.map((person, index) => renderPersonRows(person, (currentPage - 1) * itemsPerPage + index))}
           </tbody>
         </table>
       </div>
       {filteredPeople.length === 0 && (
         <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)', fontSize: '1.25rem' }}>
           No records match your search.
+        </div>
+      )}
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginTop: '1.5rem',
+          padding: '1rem',
+          background: 'rgba(255, 255, 255, 0.02)',
+          border: '1px solid var(--border)',
+          borderRadius: '12px'
+        }}>
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+            Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredPeople.length)} of {filteredPeople.length} records
+          </span>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={handlePrevPage}
+              disabled={currentPage === 1}
+              style={{
+                background: currentPage === 1 ? 'rgba(255, 255, 255, 0.05)' : 'var(--primary)',
+                color: currentPage === 1 ? 'var(--text-muted)' : 'white',
+                border: 'none',
+                padding: '0.5rem 1rem',
+                borderRadius: '8px',
+                cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                fontWeight: '600',
+                transition: 'all 0.2s'
+              }}
+            >
+              Previous
+            </button>
+            <span style={{ margin: '0 0.5rem', fontWeight: 'bold', color: 'var(--text-main)' }}>
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={handleNextPage}
+              disabled={currentPage === totalPages}
+              style={{
+                background: currentPage === totalPages ? 'rgba(255, 255, 255, 0.05)' : 'var(--primary)',
+                color: currentPage === totalPages ? 'var(--text-muted)' : 'white',
+                border: 'none',
+                padding: '0.5rem 1rem',
+                borderRadius: '8px',
+                cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                fontWeight: '600',
+                transition: 'all 0.2s'
+              }}
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
     </div>

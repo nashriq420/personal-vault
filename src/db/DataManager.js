@@ -1,6 +1,17 @@
-const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:8000' : '';
-const API_URL = `${API_BASE}/api/people`;
-const AUTH_URL = `${API_BASE}/api/login`;
+export const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:8000' : '';
+export const API_URL = `${API_BASE}/api/people`;
+export const AUTH_URL = `${API_BASE}/api/login`;
+
+const getHeaders = () => {
+  const userStr = localStorage.getItem('vault_user');
+  const user = userStr ? JSON.parse(userStr) : null;
+  // Fallback to 'admin' for legacy sessions that logged in before roles existed
+  const role = user ? (user.role || 'admin') : 'viewer';
+  return {
+    'Content-Type': 'application/json',
+    'X-Role': role
+  };
+};
 
 export const getAllPeople = async () => {
   try {
@@ -17,10 +28,31 @@ export const addPerson = async (person) => {
   try {
     const response = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getHeaders(),
       body: JSON.stringify(person)
     });
-    if (!response.ok) throw new Error('Failed to add person');
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to add person');
+    }
+    return await response.json();
+  } catch (err) {
+    console.error('API Error:', err);
+    throw err;
+  }
+};
+
+export const addPeople = async (peopleArray) => {
+  try {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(peopleArray)
+    });
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to add people in bulk');
+    }
     return await response.json();
   } catch (err) {
     console.error('API Error:', err);
@@ -32,10 +64,13 @@ export const updatePerson = async (id, person) => {
   try {
     const response = await fetch(`${API_URL}/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getHeaders(),
       body: JSON.stringify(person)
     });
-    if (!response.ok) throw new Error('Failed to update person');
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to update person');
+    }
     return await response.json();
   } catch (err) {
     console.error('API Error:', err);
@@ -46,9 +81,13 @@ export const updatePerson = async (id, person) => {
 export const deletePerson = async (id) => {
   try {
     const response = await fetch(`${API_URL}/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: { 'X-Role': getHeaders()['X-Role'] }
     });
-    if (!response.ok) throw new Error('Failed to delete person');
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to delete person');
+    }
     return await response.json();
   } catch (err) {
     console.error('API Error:', err);

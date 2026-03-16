@@ -150,9 +150,13 @@ tr td {
 }
 /* Mobile Overrides */
 @media (max-width: 768px) {
+  #root {
+    padding: 0.5rem;
+  }
+
   .vault-container {
     padding: 1rem;
-    margin: 0;
+    border-radius: 12px;
     max-width: 100vw;
   }
 
@@ -164,80 +168,41 @@ tr td {
   .section-header {
     flex-direction: column;
     align-items: flex-start;
-    gap: 1.5rem;
-  }
-
-  .section-header div {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .btn-primary {
-    padding: 0.6rem 1rem;
-    font-size: 0.8rem;
-  }
-
-  h1 { font-size: 1.1rem; }
-  h2 { font-size: 1rem; }
-  
-  .table-row-hover td {
-    padding: 0.5rem !important;
-  }
-}
-/* Mobile Overrides */
-@media (max-width: 768px) {
-  #root {
-    padding: 1rem;
-  }
-
-  .vault-container {
-    padding: 1.5rem;
-    border-radius: 16px;
-  }
-
-  .grid-2 {
-    grid-template-columns: 1fr;
     gap: 1rem;
   }
 
-  .section-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .section-header div:last-child {
+  .section-header > div {
     width: 100%;
     display: flex;
-    justify-content: stretch;
+    flex-wrap: wrap;
     gap: 0.5rem;
   }
 
-  .section-header button {
+  .section-header button, .section-header label {
     flex: 1;
+    min-width: calc(50% - 0.5rem);
     padding: 0.6rem;
     font-size: 0.8rem;
-  }
-
-  .btn-primary {
-    padding: 0.6rem 1rem;
-    font-size: 0.875rem;
+    justify-content: center;
   }
 
   h1 { font-size: 1.25rem; }
   h2 { font-size: 1.1rem; }
   
-  /* Table Mobile Optimization */
-  .fade-in > div:last-child {
-    border-radius: 12px;
+  .table-row-hover td {
+    padding: 0.6rem !important;
   }
 
   .hide-mobile {
-    display: none;
+    display: none !important;
   }
 
+  /* Make sure the main action row can scroll if it still overflows */
   .section-header div:last-child {
     overflow-x: auto;
     padding-bottom: 0.5rem;
+    border-left: none !important;
+    padding-left: 0 !important;
+    margin-left: 0 !important;
   }
 }
